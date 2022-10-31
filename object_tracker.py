@@ -37,6 +37,9 @@ flags.DEFINE_float('score', 0.50, 'score threshold')
 flags.DEFINE_boolean('dont_show', False, 'dont show video output')
 flags.DEFINE_boolean('info', False, 'show detailed info of tracked objects')
 flags.DEFINE_boolean('count', False, 'count objects being tracked on screen')
+flags.DEFINE_string('detect_info', None, 'path to folder save the objects detected')
+flags.DEFINE_string('track_info', None, 'path to save the objects tracked')
+flags.DEFINE_boolean('visualize', True, 'if you want to see the tracking')
 
 def main(_argv):
     # Definition of the parameters
@@ -80,6 +83,14 @@ def main(_argv):
         vid = cv2.VideoCapture(video_path)
 
     out = None
+    
+    #prepare file to save the detection results
+    if FLAGS.detect_info:
+        detectFile = open(FLAGS.detect_info+"/det/det.txt", "w")
+        
+    #prepare file to save tracking results
+    if FLAGS.track_info:
+        trackFile = open(FLAGS.track_info+"/track/tracklog_1.txt","w")
 
     # get video ready to save locally if flag is set
     if FLAGS.output:
@@ -92,16 +103,20 @@ def main(_argv):
 
     frame_num = 0
     # while video is running
+    track_time = 0
     while True:
         return_value, frame = vid.read()
         if return_value:
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             image = Image.fromarray(frame)
         else:
+            print('TRACK time is  : ', track_time)
             print('Video has ended or failed, try a different video format!')
             break
         frame_num +=1
         print('Frame #: ', frame_num)
+        if FLAGS.detect_info:
+            image.save(FLAGS.detect_info+"/img1/"+str(frame_num).zfill(6)+".jpg")
         frame_size = frame.shape[:2]
         image_data = cv2.resize(frame, (input_size, input_size))
         image_data = image_data / 255.
@@ -181,6 +196,11 @@ def main(_argv):
         bboxes = np.delete(bboxes, deleted_indx, axis=0)
         scores = np.delete(scores, deleted_indx, axis=0)
 
+        #Print detections to File
+        if FLAGS.detect_info:
+            for box in bboxes:
+                detectFile.write(str(frame_num)+",-1,"+str(box[0])+","+str(box[1])+","+str(box[2])+","+str(box[3])+",0,-1,-1,-1\n")
+        
         # encode yolo detections and feed to tracker
         features = encoder(frame, bboxes)
         detections = [Detection(bbox, score, class_name, feature) for bbox, score, class_name, feature in zip(bboxes, scores, names, features)]
@@ -196,28 +216,33 @@ def main(_argv):
         indices = preprocessing.non_max_suppression(boxs, classes, nms_max_overlap, scores)
         detections = [detections[i] for i in indices]       
 
+        track_time1 = time.time()
         # Call the tracker
         tracker.predict()
         tracker.update(detections)
-
         # update tracks
         for track in tracker.tracks:
             if not track.is_confirmed() or track.time_since_update > 1:
                 continue 
             bbox = track.to_tlbr()
             class_name = track.get_class()
-            
+            if FLAGS.visualize:
         # draw bbox on screen
-            color = colors[int(track.track_id) % len(colors)]
-            color = [i * 255 for i in color]
-            cv2.rectangle(frame, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), color, 2)
-            cv2.rectangle(frame, (int(bbox[0]), int(bbox[1]-30)), (int(bbox[0])+(len(class_name)+len(str(track.track_id)))*17, int(bbox[1])), color, -1)
-            cv2.putText(frame, class_name + "-" + str(track.track_id),(int(bbox[0]), int(bbox[1]-10)),0, 0.75, (255,255,255),2)
+                color = colors[int(track.track_id) % len(colors)]
+                color = [i * 255 for i in color]
+                cv2.rectangle(frame, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), color, 2)
+                cv2.rectangle(frame, (int(bbox[0]), int(bbox[1]-30)), (int(bbox[0])+(len(class_name)+len(str(track.track_id)))*17, int(bbox[1])), color, -1)
+                cv2.putText(frame, class_name + "-" + str(track.track_id),(int(bbox[0]), int(bbox[1]-10)),0, 0.75, (255,255,255),2)
 
         # if enable info flag then print details about each track
-            if FLAGS.info:
-                print("Tracker ID: {}, Class: {},  BBox Coords (xmin, ymin, xmax, ymax): {}".format(str(track.track_id), class_name, (int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))))
-
+                if FLAGS.info:
+                    print("Tracker ID: {}, Class: {},  BBox Coords (xmin, ymin, xmax, ymax): {}".format(str(track.track_id), class_name, (int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))))
+            
+                if FLAGS.track_info:
+                    trackFile.write(str(frame_num)+","+str(track.track_id)+","+str(bbox[0])+","+str(bbox[1])+","+str(bbox[2]-bbox[0])+","+str(bbox[3]-bbox[1])+",-1,-1,-1,-1\n")
+        
+        track_time1 = time.time() - track_time1
+        track_time = track_time + track_time1
         # calculate frames per second of running detections
         fps = 1.0 / (time.time() - start_time)
         print("FPS: %.2f" % fps)
@@ -231,7 +256,12 @@ def main(_argv):
         if FLAGS.output:
             out.write(result)
         if cv2.waitKey(1) & 0xFF == ord('q'): break
+    
     cv2.destroyAllWindows()
+    if FLAGS.detect_info:
+        detectFile.close()
+    if FLAGS.track_info:
+        trackFile.close()
 
 if __name__ == '__main__':
     try:
